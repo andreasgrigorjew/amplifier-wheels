@@ -159,45 +159,61 @@ class amplifier:
     
     def ilp_check_expansion(self):
         """
-        Check expansion using an ILP. Uses PuLP (CBC solver).
+        Check expansion using an ILP. Uses Gurobi solver.
         Returns (is_expanding, min_value, S) where:
             - is_expanding: True if the minimum is >= 0, False otherwise
             - min_value: the optimal value of sum(y_{i,j}) - sum(x_i)
             - S: the subset of vertices (as a list) corresponding to x_i = 1
         """
-        import pulp
+        try:
+            import gurobipy as gp
+            from gurobipy import GRB
+        except ImportError:
+            raise ImportError("Gurobi not installed. Install gurobipy or use the PuLP version.")
 
         n = len(self.V)
+        
+        # Create a new model
+        model = gp.Model("ExpansionCheck")
+        
+        # Suppress output
+        model.setParam('OutputFlag', 0)
+        
         # Variables: x_i for each vertex, y_{i,j} for each edge (counting multiplicity)
-        x = [pulp.LpVariable(f"x_{i}", cat="Binary") for i in self.V]
-        y = [pulp.LpVariable(f"y_{i}_{j}_{k}", cat="Binary") for k, (i, j) in enumerate(self.E)]
+        x = [model.addVar(vtype=GRB.BINARY, name=f"x_{i}") for i in self.V]
+        y = [model.addVar(vtype=GRB.BINARY, name=f"y_{i}_{j}_{k}") for k, (i, j) in enumerate(self.E)]
 
-        prob = pulp.LpProblem("ExpansionCheck", pulp.LpMinimize)
+        # Update to register variables
+        model.update()
 
         # y_{i,j} = x_i xor x_j, linearized:
-        # y = x_i + x_j - 2*z, where z is a new binary variable for each edge
-        # But easier: y >= x_i - x_j, y >= x_j - x_i, y <= x_i + x_j, y <= 2 - (x_i + x_j)
         for k, (i, j) in enumerate(self.E):
-            prob += y[k] >= x[i] - x[j]
-            prob += y[k] >= x[j] - x[i]
-            prob += y[k] <= x[i] + x[j]
-            prob += y[k] <= 2 - (x[i] + x[j])
+            model.addConstr(y[k] >= x[i] - x[j], name=f"xor1_{k}")
+            model.addConstr(y[k] >= x[j] - x[i], name=f"xor2_{k}")
+            model.addConstr(y[k] <= x[i] + x[j], name=f"xor3_{k}")
+            model.addConstr(y[k] <= 2 - x[i] - x[j], name=f"xor4_{k}")
 
         # Subset size constraint: 1 <= sum x_i <= n//2
-        prob += pulp.lpSum(x) >= 1
-        prob += pulp.lpSum(x) <= n // 2
+        model.addConstr(gp.quicksum(x) >= 1, name="min_size")
+        model.addConstr(gp.quicksum(x) <= n // 2, name="max_size")
 
-        # Objective: minimize sum(y) - sum(x_i for i in contacts)*2
-        prob += pulp.lpSum(y) - pulp.lpSum([x[i] for i in self.contacts])*2
+        # Objective: minimize sum(y) - sum(x_i for i in self.contacts)*2
+        obj_expr = gp.quicksum(y) - 2 * gp.quicksum(x[i] for i in self.contacts)
+        model.setObjective(obj_expr, GRB.MINIMIZE)
 
-        # Solve
-        prob.solve(pulp.PULP_CBC_CMD(msg=False))
+        # Solve the model
+        model.optimize()
 
-        min_value = pulp.value(prob.objective)
-        assert min_value % 2 == 0, "Objective value should be even"
-        S = [i for i in self.V if pulp.value(x[i]) > 0.5]
-        is_expanding = min_value >= 0
-        return is_expanding, min_value/2, S
+        # Check if the problem was solved
+        if model.status == GRB.OPTIMAL:
+            min_value = model.objVal
+            assert min_value % 2 == 0, "Objective value should be even"
+            S = [i for i in self.V if x[i].X > 0.5]
+            is_expanding = min_value >= 0
+            return is_expanding, min_value/2, S
+        else:
+            print(f"Gurobi error: {model.status}")
+            return False, float("inf"), []
     
     def check_ILP_result_correctness(self, S):
         """
