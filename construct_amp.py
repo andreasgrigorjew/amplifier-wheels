@@ -1,3 +1,8 @@
+import argparse
+import os
+import networkx as nx
+from datetime import datetime
+
 REPEATS_DEFAULT = 150
 
 class amplifier:
@@ -365,20 +370,84 @@ def find_biwheel_amplifier_with_average(num_contacts_per_wheel: int, avg: float,
     
     return None
 
+def save_graph(amp, filename_prefix, output_dir='output_graphs'):
+    """
+    Save an amplifier graph using NetworkX in multiple formats.
+    
+    Parameters:
+        amp: The amplifier object
+        filename_prefix: Prefix for the output filenames
+        output_dir: Directory to save the graphs
+    """
+    # Create output directory if it doesn't exist
+    os.makedirs(output_dir, exist_ok=True)
+    
+    # Create a NetworkX graph
+    G = nx.MultiDiGraph()  # Use MultiDiGraph to handle parallel edges
+    
+    # Add nodes with attributes
+    for v in amp.V:
+        is_contact = v in amp.contacts
+        G.add_node(v, is_contact=is_contact, 
+                  type="contact" if is_contact else "checker",
+                  group=amp.group_of(v))
+    
+    # Add edges
+    for u, v in amp.E:
+        G.add_edge(u, v)
+    
+    # Save in multiple formats
+    base_path = os.path.join(output_dir, filename_prefix)
+    
+    # GraphML format - preserves node/edge attributes
+    nx.write_graphml(G, f"{base_path}.graphml")
+    
+    # GEXF format - good for Gephi visualization
+    nx.write_gexf(G, f"{base_path}.gexf")
+    
+    # Edge list - simple text format
+    nx.write_edgelist(G, f"{base_path}.edgelist")
+    
+    return f"{base_path}"
+
 def main():
     """
     Main function to demonstrate the amplifier class.
     """
-    for num_contacts in range(1, 40):
+    # Add command line argument parsing
+    parser = argparse.ArgumentParser(description="Find and save amplifier graphs")
+    parser.add_argument("--save-graphs", action="store_true", help="Save found graphs to files")
+    parser.add_argument("--output-dir", default="output_graphs", help="Directory to save graphs")
+    parser.add_argument("--max-contacts", type=int, default=40, help="Maximum number of contacts to try")
+    parser.add_argument("--max-biwheel-contacts", type=int, default=20, help="Maximum contacts per wheel to try for bi-wheels")
+    args = parser.parse_args()
+    
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    
+    # Rest of your existing main function - just add graph saving where needed
+    for num_contacts in range(1, args.max_contacts):
         amp = find_amplifier(num_contacts)
         if amp is not None:
             print(f"Amplifier found with {num_contacts} contacts and {amp.num_checkers} checkers.", flush=True)
+            
+            # Save the graph if requested
+            if args.save_graphs:
+                filename = f"wheel_{num_contacts}c_{amp.num_checkers}ch_{timestamp}"
+                path = save_graph(amp, filename, args.output_dir)
+                print(f"Graph saved to {path}.*")
 
             # Try to find an amplifier with a rational number of average checkers
             avg = amp.num_checkers - 0.5
             amp_avg = find_amplifier_with_average(num_contacts, avg)
             if amp_avg is not None:
                 print(f"Amplifier found with {num_contacts} contacts and average {avg} checkers.", flush=True)
+                
+                # Save the fractional graph if requested
+                if args.save_graphs:
+                    filename = f"wheel_{num_contacts}c_avg{avg}ch_{timestamp}"
+                    path = save_graph(amp_avg, filename, args.output_dir)
+                    print(f"Graph saved to {path}.*")
+                
                 print("")
             else:
                 print(f"No amplifier found with {num_contacts} contacts and average {avg} checkers.", flush=True)
@@ -390,16 +459,28 @@ def main():
             break
 
     print("\n=== Bi-Wheel Amplifiers ===")
-    for num_contacts_per_wheel in range(1, 20):
+    for num_contacts_per_wheel in range(1, args.max_biwheel_contacts):
         amp = find_biwheel_amplifier(num_contacts_per_wheel)
         if amp is not None:
             print(f"Bi-wheel amplifier found with {num_contacts_per_wheel} contacts per wheel and {amp.num_checkers} checkers per contact.", flush=True)
+            
+            # Save the graph if requested
+            if args.save_graphs:
+                filename = f"biwheel_{num_contacts_per_wheel}c_{amp.num_checkers}ch_{timestamp}"
+                path = save_graph(amp, filename, args.output_dir)
+                print(f"Graph saved to {path}.*")
 
             # Try to find a bi-wheel with a fractional number of checkers
             avg = amp.num_checkers - 0.5
             amp_avg = find_biwheel_amplifier_with_average(num_contacts_per_wheel, avg)
             if amp_avg is not None:
                 print(f"Bi-wheel amplifier found with {num_contacts_per_wheel} contacts per wheel and average {avg} checkers per contact.", flush=True)
+                
+                # Save the fractional graph if requested
+                if args.save_graphs:
+                    filename = f"biwheel_{num_contacts_per_wheel}c_avg{avg}ch_{timestamp}"
+                    path = save_graph(amp_avg, filename, args.output_dir)
+                    print(f"Graph saved to {path}.*")
             
             print("")
         
